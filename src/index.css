@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── React Flow overrides ───────────────────────────── */
+.react-flow__background {
+  background-color: #020617 !important;
+}
+html:not(.dark) .react-flow__background {
+  background-color: #f8fafc !important;
+}
+
+.react-flow__node {
+  z-index: 100 !important;
+}
+
+.react-flow__edge {
+  z-index: 1 !important;
+}
+
+.react-flow__controls button {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  color: #00f0ff;
+  fill: #00f0ff;
+}
+.react-flow__controls button:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(0, 240, 255, 0.5);
+}
+html:not(.dark) .react-flow__controls button {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  color: #475569;
+  fill: #475569;
+}
+html:not(.dark) .react-flow__controls button:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(100, 116, 139, 0.5);
+}
+
+.react-flow__minimap {
+  background: rgba(15, 23, 42, 0.85) !important;
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
+}
+html:not(.dark) .react-flow__minimap {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(100, 116, 139, 0.2);
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+/* ── Scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.5);
+}
+html:not(.dark) ::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.5);
+}
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+
+/* ── Terminal cursor blink ──────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink::after {
+  content: '\258a';
+  animation: blink 1s step-end infinite;
+  color: #00f0ff;
+}
