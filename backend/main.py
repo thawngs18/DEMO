@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from ai_service import (
     GENERATION_PROMPT,
     VALIDATION_PROMPT,
     SIMULATION_PROMPT,
+    SIMULATION_WITH_DEFENSE_PROMPT,
     SCAN_PROMPT,
 )
 
@@ -22,21 +24,21 @@ class Position(BaseModel):
 
 class NodeData(BaseModel):
     label: str
-    type: str
+    type: str = "customNode"
 
 
 class Node(BaseModel):
     id: str
     type: str = "customNode"
-    position: Position
-    data: NodeData
+    position: Position | None = None
+    data: NodeData | None = None
 
 
 class Edge(BaseModel):
     id: str
     source: str
     target: str
-    type: str = "smoothstep"
+    type: str | None = "smoothstep"
     animated: bool = False
 
 
@@ -59,13 +61,16 @@ class SimulationStep(BaseModel):
     node_id: str
     action: str
     status: str  # 'compromised' | 'bypassed' | 'blocked'
+    explanation: Optional[str] = None
+    next_hint: Optional[str] = None
+    blocking_detail: Optional[str] = None  # explains how attack was blocked (for blocked steps)
 
 
 class SimulationResponse(BaseModel):
     attack_path: list[SimulationStep]
     final_status: str  # 'success' | 'mitigated'
-    recommended_defense: str
-    impact_summary: str = ""
+    recommended_defense: Optional[str] = ""
+    impact_summary: Optional[str] = ""
 
 
 class SimulationRequest(BaseModel):
@@ -75,13 +80,22 @@ class SimulationRequest(BaseModel):
     scenario_description: str = ""
     target_node_id: str = ""
 
+
+class SimulationWithDefenseRequest(BaseModel):
+    topology: TopologyRequest
+    scenario_id: str
+    scenario_name: str = ""
+    scenario_description: str = ""
+    target_node_id: str = ""
+    defense_measures: str  # defense recommendations to apply
+
 # ---------------------------------------------------------------------------
 # AI Helper & Topology Formatting
 # ---------------------------------------------------------------------------
 
 
 def format_topology(req: TopologyRequest) -> str:
-    node_lines = [f"  - {n.id} (type: {n.data.type})" for n in req.nodes]
+    node_lines = [f"  - {n.id} (type: {n.data.type if n.data else n.type})" for n in req.nodes]
     edge_lines = [f"  - {e.source} -> {e.target}" for e in req.edges]
     return (
         f"Network Topology ({len(req.nodes)} nodes, {len(req.edges)} edges):\n"
@@ -261,6 +275,23 @@ async def run_simulation(body: SimulationRequest) -> SimulationResponse:
     formatted = format_simulation_request(body.topology, scenario)
     result = await call_llm(
         system_prompt=SIMULATION_PROMPT,
+        user_prompt=formatted,
+    )
+    return result
+
+
+@app.post("/api/simulation/run-with-defense")
+async def run_simulation_with_defense(body: SimulationWithDefenseRequest) -> SimulationResponse:
+    scenario = {
+        "name": body.scenario_name,
+        "target_node_id": body.target_node_id,
+        "description": body.scenario_description,
+    }
+
+    formatted = format_simulation_request(body.topology, scenario)
+    system_prompt = SIMULATION_WITH_DEFENSE_PROMPT.replace("{defense_measures}", body.defense_measures)
+    result = await call_llm(
+        system_prompt=system_prompt,
         user_prompt=formatted,
     )
     return result

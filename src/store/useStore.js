@@ -26,13 +26,16 @@ function resolveAnimationSteps(attackPath, edges) {
       nodeId: step.node_id,
       edgeId: step.edge_id || edgeId,
       status: step.status,
-      action: step.action || step.status
+      action: step.action || step.status,
+      explanation: step.explanation || '',
+      nextHint: step.next_hint || '',
+      blockingDetail: step.blocking_detail || '',  // for blocked steps
     })
   }
   return steps
 }
 
-function formatResultBody(steps, isMitigated, defense, impactSummary) {
+function formatResultBody(steps, isMitigated, defense, impactSummary, isRerun) {
   var indent = '   '
   var wrap = function(text, width) {
     if (!text) return ''
@@ -63,12 +66,22 @@ function formatResultBody(steps, isMitigated, defense, impactSummary) {
     lines.push((idx + 1) + '. ' + (step.action || step.status))
     if (step.status === 'blocked') {
       lines.push(indent + '[BLOCKED]')
+      if (step.blockingDetail) {
+        lines.push(wrap('[Defense] ' + step.blockingDetail, 50))
+      }
     }
   })
-  if (defense) {
-    lines.push('')
-    lines.push('Recommended Defense:')
-    lines.push(indent + wrap(defense, 50))
+  // Only show Defense Hint on first run (not re-run with defense already applied)
+  if (!isRerun) {
+    if (defense) {
+      lines.push('')
+      lines.push('Defense Hint:')
+      lines.push(indent + wrap(defense, 50))
+    } else {
+      lines.push('')
+      lines.push('Defense Hint:')
+      lines.push(indent + 'No specific defense recommendations available.')
+    }
   }
   return lines.join('\n')
 }
@@ -215,7 +228,7 @@ const useStore = create((set, get) => ({
     var scenario = state.scenarios.find(function(s) { return s.id === scenarioId }) || null
     var targetNodeId = scenario ? scenario.target_node_id : 'Unknown'
 
-    var body = formatResultBody(steps, isMitigated, state.animationDefense, data.impact_summary || '')
+    var body = formatResultBody(steps, isMitigated, data.recommended_defense || '', data.impact_summary || '', false)
 
     set(function(s) {
       return {
@@ -226,6 +239,7 @@ const useStore = create((set, get) => ({
           type: isMitigated ? 'warning' : 'success',
           title: isMitigated ? 'Attack Mitigated' : 'Attack Successful',
           body: body,
+          defense: data.recommended_defense || '',  // store defense for re-run
         },
         modalIsOpen: true,
       }
@@ -238,6 +252,119 @@ const useStore = create((set, get) => ({
       animationIndex: -1,
       animationStatus: 'idle',
       animationDefense: '',
+      selectedNode: null,
+    })
+    set(function(s) {
+      return {
+        edges: s.edges.map(function(e) {
+          return { ...e, animated: false, style: defaultStyle }
+        }),
+      }
+    })
+  },
+
+  // Re-run simulation with defense measures applied
+  reRunWithDefense: async (defenseMeasures) => {
+    var state = get()
+    var scenarioId = state.attackPaths.length > 0 ? state.attackPaths[0].id : null
+    
+    // Get current topology
+    var topology = {
+      nodes: state.nodes.map(function(n) { return { id: n.id, type: n.type, label: n.data?.label || n.id } }),
+      edges: state.edges.map(function(e) { return { id: e.id, source: e.source, target: e.target } }),
+    }
+
+    set({
+      modalIsOpen: false,  // close current modal
+      animationSteps: [],
+      animationIndex: 0,
+      animationStatus: 'running',
+      isSimulating: true,
+    })
+
+    // Small delay to let modal close
+    await new Promise(function(r) { setTimeout(r, 300) })
+
+    var res
+    try {
+      res = await fetch(API_BASE + '/api/simulation/run-with-defense', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topology: topology,
+          scenario_id: scenarioId || 'defense-run',
+          scenario_name: 'Defense Simulation',
+          scenario_description: 'Re-running attack with defenses in place',
+          target_node_id: scenarioId ? (state.scenarios.find(function(s) { return s.id === scenarioId }) || {}).target_node_id : '',
+          defense_measures: defenseMeasures,
+        }),
+      })
+    } catch (e) {
+      console.error('[Store] Re-run with defense failed:', e)
+      set({ animationStatus: 'idle', isSimulating: false })
+      return
+    }
+    if (!res.ok) {
+      set({ animationStatus: 'idle', isSimulating: false })
+      return
+    }
+
+    var data = await res.json()
+    var steps = resolveAnimationSteps(data.attack_path, state.edges)
+    set({ animationSteps: steps })
+
+    var defaultStyle = { stroke: '#00f0ff', strokeWidth: 2 }
+
+    for (var i = 0; i < steps.length; i++) {
+      set({ animationIndex: i })
+      var step = steps[i]
+
+      if (step.edgeId) {
+        set(function(s) {
+          return {
+            edges: s.edges.map(function(e) {
+              if (e.id !== step.edgeId) return e
+              var color = step.status === 'blocked' ? '#22c55e' : (step.status === 'bypassed' ? '#f59e0b' : '#f43f5e')
+              return { ...e, animated: true, style: { stroke: color, strokeWidth: 3 } }
+            }),
+          }
+        })
+      }
+
+      if (step.status === 'blocked') {
+        // Show blocking detail immediately
+        await new Promise(function(r) { setTimeout(r, 1500) })
+        break
+      }
+      await new Promise(function(r) { setTimeout(r, 2000) })
+    }
+
+    var lastStep = steps[steps.length - 1]
+    var isMitigated = lastStep && (lastStep.status === 'blocked' || lastStep.status === 'bypassed')
+
+    // Don't show defense hint for re-run results - defense is already applied
+    var body = formatResultBody(steps, isMitigated, '', data.impact_summary || '', true)
+
+    set(function(s) {
+      return {
+        animationStatus: 'mitigated',
+        isSimulating: false,
+        aiResultContent: {
+          type: 'warning',
+          title: 'Attack Mitigated',
+          subtitle: 'Defenses in place',
+          body: body,
+        },
+        modalIsOpen: true,
+      }
+    })
+
+    await new Promise(function(r) { setTimeout(r, 3000) })
+
+    set({
+      animationSteps: [],
+      animationIndex: -1,
+      animationStatus: 'idle',
       selectedNode: null,
     })
     set(function(s) {

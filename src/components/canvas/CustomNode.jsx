@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { Handle, Position } from 'reactflow'
 import { NODE_DEFINITIONS } from '../../data/nodeDefinitions'
 import useStore from '../../store/useStore'
@@ -6,13 +6,14 @@ import useStore from '../../store/useStore'
 var handleStyle = '!w-2.5 !h-2.5 !border !border-cyber-cyan/40 !bg-cyber-cyan/15 hover:!bg-cyber-cyan/40 hover:!border-cyber-cyan/70 !transition-all !duration-150'
 
 function CustomNode({ id, data, selected }) {
+  var [showDefenseTooltip, setShowDefenseTooltip] = useState(false)
   var theme = useStore(function(s) { return s.theme })
   var isDark = theme === 'dark'
   var selectedNode = useStore(function(s) { return s.selectedNode })
-  const attackPaths = useStore(function(s) { return s.attackPaths })
-  const isSimulating = useStore(function(s) { return s.isSimulating })
-  const animationSteps = useStore(function(s) { return s.animationSteps })
-  const animationIndex = useStore(function(s) { return s.animationIndex })
+  var attackPaths = useStore(function(s) { return s.attackPaths })
+  var isSimulating = useStore(function(s) { return s.isSimulating })
+  var animationSteps = useStore(function(s) { return s.animationSteps })
+  var animationIndex = useStore(function(s) { return s.animationIndex })
 
   var isAttackTarget = selectedNode ? selectedNode.id === id : false
 
@@ -35,6 +36,21 @@ function CustomNode({ id, data, selected }) {
   var isBlocked = animNodeStatus
     ? animNodeStatus === 'blocked'
     : (isSimulating && attackPaths.some(function(p) { return p.blocked && p.nodeIds.includes(id) && p.nodeIds.indexOf(id) <= p.blockedAtIndex }))
+
+  // Get blocking details for tooltip
+  var blockingInfo = null
+  if (isBlocked && animationIndex >= 0) {
+    for (var b = 0; b <= animationIndex && b < animationSteps.length; b++) {
+      if (animationSteps[b].nodeId === id && animationSteps[b].status === 'blocked') {
+        blockingInfo = {
+          blockingDetail: animationSteps[b].blockingDetail || 'Security control detected',
+          action: animationSteps[b].action || 'Attack attempt',
+          explanation: animationSteps[b].explanation || '',
+        }
+        break
+      }
+    }
+  }
 
   var nodeBg = isDark ? 'bg-slate-900' : 'bg-white'
   var labelClass = isDark ? 'text-white' : 'text-slate-800'
@@ -63,30 +79,83 @@ function CustomNode({ id, data, selected }) {
   }
 
   return (
-    <div
-      className={'px-4 py-3 rounded-xl min-w-[140px] border-2 transition-all duration-300 ' + nodeBg + ' ' + borderClass}
-    >
-      <Handle type="target" id="top-target" position={Position.Top} className={handleStyle} />
-      <Handle type="source" id="top-source" position={Position.Top} className={handleStyle} />
-      <Handle type="target" id="left-target" position={Position.Left} className={handleStyle} />
-      <Handle type="source" id="left-source" position={Position.Left} className={handleStyle} />
+    <div className="relative">
+      <div
+        className={'px-4 py-3 rounded-xl min-w-[140px] border-2 transition-all duration-300 ' + nodeBg + ' ' + borderClass}
+        onMouseEnter={function() { if (isBlocked) setShowDefenseTooltip(true) }}
+        onMouseLeave={function() { setShowDefenseTooltip(false) }}
+      >
+        <Handle type="target" id="top-target" position={Position.Top} className={handleStyle} />
+        <Handle type="source" id="top-source" position={Position.Top} className={handleStyle} />
+        <Handle type="target" id="left-target" position={Position.Left} className={handleStyle} />
+        <Handle type="source" id="left-source" position={Position.Left} className={handleStyle} />
 
-      <div className="flex items-center gap-2.5">
-        {Icon && (
-          <Icon size={20} className={iconColor} />
-        )}
-        <div>
-          <p className={'text-sm font-medium leading-tight ' + labelClass}>
-            {data.label || (def ? def.label : data.type) || 'Node'}
-          </p>
-          <p className={'text-[10px] font-mono ' + idClass}>{id}</p>
+        <div className="flex items-center gap-2.5">
+          {Icon && (
+            <Icon size={20} className={iconColor} />
+          )}
+          <div>
+            <p className={'text-sm font-medium leading-tight ' + labelClass}>
+              {data.label || (def ? def.label : data.type) || 'Node'}
+            </p>
+            <p className={'text-[10px] font-mono ' + idClass}>{id}</p>
+          </div>
         </div>
+
+        <Handle type="source" id="right-source" position={Position.Right} className={handleStyle} />
+        <Handle type="target" id="right-target" position={Position.Right} className={handleStyle} />
+        <Handle type="source" id="bottom-source" position={Position.Bottom} className={handleStyle} />
+        <Handle type="target" id="bottom-target" position={Position.Bottom} className={handleStyle} />
       </div>
 
-      <Handle type="source" id="right-source" position={Position.Right} className={handleStyle} />
-      <Handle type="target" id="right-target" position={Position.Right} className={handleStyle} />
-      <Handle type="source" id="bottom-source" position={Position.Bottom} className={handleStyle} />
-      <Handle type="target" id="bottom-target" position={Position.Bottom} className={handleStyle} />
+      {/* Defense Tooltip - Shows attack vs defense breakdown on hover */}
+      {showDefenseTooltip && blockingInfo && (
+        <div className="absolute left-full top-0 ml-3 z-50 w-72">
+          <div className="bg-slate-900/98 border border-cyber-green/40 rounded-lg shadow-2xl shadow-black/50 p-3">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/10">
+              <span className="text-xs font-bold text-cyber-green">DEFENSE ACTIVE</span>
+              <span className="text-[10px] text-white/40">{data.label || def?.label || id}</span>
+            </div>
+
+            {/* Attack vs Defense Breakdown */}
+            <div className="space-y-2">
+              {/* Attack attempt */}
+              <div className="bg-red-500/10 border border-red-500/30 rounded p-2">
+                <p className="text-[9px] text-red-400 font-semibold mb-1">ATTACK ATTEMPT</p>
+                <p className="text-[10px] text-white/80 leading-relaxed">
+                  {blockingInfo.action}
+                </p>
+                {blockingInfo.explanation && (
+                  <p className="text-[9px] text-white/50 mt-1 italic">
+                    {blockingInfo.explanation}
+                  </p>
+                )}
+              </div>
+
+              {/* Arrow indicator */}
+              <div className="flex justify-center">
+                <span className="text-cyber-green text-sm">▼ BLOCKED ▼</span>
+              </div>
+
+              {/* Defense mechanism */}
+              <div className="bg-cyber-green/10 border border-cyber-green/30 rounded p-2">
+                <p className="text-[9px] text-cyber-green font-semibold mb-1">HOW IT WAS BLOCKED</p>
+                <p className="text-[10px] text-white/80 leading-relaxed">
+                  {blockingInfo.blockingDetail}
+                </p>
+              </div>
+            </div>
+
+            {/* Result */}
+            <div className="mt-2 pt-2 border-t border-white/10">
+              <p className="text-[9px] text-cyber-green/70">
+                Result: Request terminated before reaching target
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

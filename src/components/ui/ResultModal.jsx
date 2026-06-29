@@ -1,22 +1,22 @@
 import { useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Bot, AlertTriangle, CheckCircle, Info } from 'lucide-react'
+import { X, Bot, AlertTriangle, Info, Shield } from 'lucide-react'
 import useStore from '../../store/useStore'
 
 var TYPE_CONFIG = {
   success: {
-    border: 'border-cyber-green/50',
-    shadow: 'shadow-[0_0_20px_rgba(0,255,65,0.15)]',
-    icon: CheckCircle,
-    iconColor: 'text-cyber-green',
-    label: 'Success',
-  },
-  warning: {
     border: 'border-cyber-red/50',
     shadow: 'shadow-[0_0_20px_rgba(255,0,60,0.15)]',
     icon: AlertTriangle,
     iconColor: 'text-cyber-red',
-    label: 'Warning',
+    label: 'Attack Simulated',
+  },
+  warning: {
+    border: 'border-cyber-green/50',
+    shadow: 'shadow-[0_0_20px_rgba(34,197,94,0.2)]',
+    icon: Shield,
+    iconColor: 'text-cyber-green',
+    label: 'Attack Mitigated',
   },
   info: {
     border: 'border-cyber-cyan/50',
@@ -31,6 +31,7 @@ export default function ResultModal() {
   var modalIsOpen = useStore(function(s) { return s.modalIsOpen })
   var content = useStore(function(s) { return s.aiResultContent })
   var setModalOpen = useStore(function(s) { return s.setModalOpen })
+  var reRunWithDefense = useStore(function(s) { return s.reRunWithDefense })
   var theme = useStore(function(s) { return s.theme })
   var isDark = theme === 'dark'
 
@@ -51,6 +52,9 @@ export default function ResultModal() {
   var handleOverlayClick = useCallback(function(e) {
     if (e.target === e.currentTarget) handleClose()
   }, [handleClose])
+
+  // Show re-run button only for successful attacks (has defense to apply)
+  var showRerun = content?.type === 'success' && content?.defense
 
   return (
     <AnimatePresence>
@@ -76,11 +80,8 @@ export default function ResultModal() {
             {/* Header */}
             <div className={'flex items-center justify-between px-5 py-3.5 border-b shrink-0 ' + borderColor}>
               <div className="flex items-center gap-3">
-                <Bot size={18} className="text-cyber-cyan" />
+                <Bot size={18} className="text-cyber-red" />
                 <span className={'text-sm font-semibold tracking-wide ' + titleClass}>AI NEXUS</span>
-                <span className={'text-[10px] uppercase tracking-widest font-mono ' + cfg.iconColor}>
-                  {cfg.label}
-                </span>
               </div>
               <button
                 onClick={handleClose}
@@ -103,6 +104,32 @@ export default function ResultModal() {
               <pre className={'text-xs font-mono leading-relaxed whitespace-pre ' + contentClass}>
                 {content.body}
               </pre>
+
+              {/* Defense Details Section - Enhanced for mitigated attacks */}
+              {content.type === 'warning' && content.defense && (
+                <div className="mt-4 p-3 bg-cyber-green/10 border border-cyber-green/30 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield size={14} className="text-cyber-green" />
+                    <span className="text-xs font-semibold text-cyber-green">Defense Measures Applied</span>
+                  </div>
+                  <p className="text-xs text-gray-300 leading-relaxed">
+                    {content.defense}
+                  </p>
+                </div>
+              )}
+
+              {/* Re-run with defense button */}
+              {showRerun && (
+                <div className="mt-4 pt-4 border-t border-slate-700/50">
+                  <button
+                    onClick={function() { reRunWithDefense(content.defense) }}
+                    className="w-full px-4 py-2.5 bg-cyber-cyan/10 hover:bg-cyber-cyan/20 border border-cyber-cyan/30 rounded-lg text-sm font-medium text-cyber-cyan transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Shield size={16} />
+                    Re-run Attack with Defense Applied
+                  </button>
+                </div>
+              )}
             </div>
           </motion.div>
         </motion.div>

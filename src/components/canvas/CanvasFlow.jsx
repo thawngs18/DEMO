@@ -3,6 +3,7 @@ import ReactFlow, {
   Background,
   Controls,
   ReactFlowProvider,
+  MarkerType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import useStore from '../../store/useStore'
@@ -26,10 +27,24 @@ export default function CanvasFlow() {
     type: 'custom',
     animated: false,
     style: { stroke: isDark ? '#00f0ff' : '#94a3b8', strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: isDark ? '#00f0ff' : '#94a3b8' },
   }
 
   useEffect(function() {
     function handleKeyDown(e) {
+      // Delete selected edges with Delete or Backspace
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        var target = e.target
+        if (target && target.closest && target.closest('.react-flow')) {
+          var store = useStore.getState()
+          var selectedEdges = store.edges.filter(function(edge) { return edge.selected })
+          if (selectedEdges.length > 0) {
+            e.preventDefault()
+            store.setEdges(store.edges.filter(function(edge) { return !edge.selected }))
+            store.addLog({ text: 'Deleted ' + selectedEdges.length + ' connection(s)', type: 'info' })
+          }
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         var target = e.target
         if (target && target.closest && target.closest('.react-flow')) {
@@ -130,6 +145,18 @@ export default function CanvasFlow() {
           onDragOver={onDragOver}
           onDrop={onDrop}
           onNodeClick={onNodeClick}
+          onEdgeClick={function(_event, edge) {
+            useStore.getState().setEdges(
+              useStore.getState().edges.map(function(e) {
+                return { ...e, selected: e.id === edge.id }
+              })
+            )
+          }}
+          onPaneClick={function() {
+            useStore.getState().setEdges(
+              useStore.getState().edges.map(function(e) { return { ...e, selected: false } })
+            )
+          }}
           onNodeDrag={onNodeDrag}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}

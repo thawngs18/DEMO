@@ -44,9 +44,33 @@ SIMULATION_PROMPT = (
     "Also include an 'impact_summary' field describing what the attacker actually gains "
     "if successful (e.g., 'shell access obtained', 'database credentials exfiltrated', "
     "'RCE on web server achieved', 'user session hijacked'). "
+    "Include an 'explanation' field (max 60 chars) briefly explaining WHY this command is used. "
+    "Include a 'next_hint' field (max 80 chars) describing what the attacker can do next IF successful. "
     "Respond ONLY with a JSON object containing 'attack_path' "
-    "(array of {node_id, action, status}), 'final_status': 'success'/'mitigated', "
+    "(array of {node_id, action, status, explanation, next_hint}), 'final_status': 'success'/'mitigated', "
     "'recommended_defense': string, and 'impact_summary': string."
+)
+
+SIMULATION_WITH_DEFENSE_PROMPT = (
+    "You are an Ethical Hacker Red Team Operator re-running an attack simulation with NEW DEFENSES in place. "
+    "The target network has implemented the following defense measures:\n"
+    "{defense_measures}\n\n"
+    "Given the network topology and attack scenario, trace the attack path step-by-step. "
+    "This time the attack SHOULD BE BLOCKED by the defenses. "
+    "Apply realistic security logic: "
+    "1. Each security node (Firewall, IPS, IDS, WAF) will block the attack if properly configured. "
+    "2. The blocking point should be where the defense measure is implemented. "
+    "3. If multiple defenses exist, the attack is blocked at the FIRST effective defense. "
+    "If blocked, the step status is 'blocked' and simulation stops with a 'blocking_detail' explaining exactly how/why it was blocked. "
+    "If somehow it passes a defense, status is 'bypassed'. "
+    "IMPORTANT: For each step in the attack_path, include: "
+    "  - 'action': the attack technique used (e.g., 'nmap -sV scan', 'exploit CVE-2024-1234'). "
+    "  - 'status': 'compromised' (passed) | 'bypassed' (evaded) | 'blocked' (stopped by defense). "
+    "  - 'explanation': max 60 chars explaining WHY this step is happening. "
+    "  - 'next_hint': max 80 chars describing what attacker tries next IF successful (only for non-blocked steps). "
+    "  - 'blocking_detail': max 200 chars explaining EXACTLY how the defense blocked the attack (REQUIRED for blocked steps). "
+    "Respond ONLY with a JSON object containing 'attack_path' (array of {node_id, action, status, explanation, next_hint, blocking_detail}), "
+    "'final_status': 'mitigated', 'recommended_defense': string (keep same), and 'impact_summary': string describing what would have happened IF there were no defenses."
 )
 
 SCAN_PROMPT = (
@@ -78,41 +102,51 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text.strip())
 
 
-async def call_llm(system_prompt: str, user_prompt: str) -> dict:
+async def call_llm(system_prompt: str, user_prompt: str, retries: int = 2) -> dict:
     """Call Gemini API with system and user prompts."""
-    print("=" * 60)
-    print("[Gemini] System Prompt:")
-    print(system_prompt)
-    print()
-    print("[Gemini] User Prompt:")
-    print(user_prompt)
-    print("=" * 60)
 
     if _client is None:
         raise ValueError(
             "GOOGLE_API_KEY not set. Please set your Google AI Studio API key as an environment variable."
         )
 
-    try:
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
+    config = types.GenerateContentConfig(
+        temperature=0,
+        response_mime_type="application/json",
+        max_output_tokens=8192,
+    )
 
-        response = _client.models.generate_content(
-            model=_model,
-            contents=full_prompt,
-            config=types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-            ),
-        )
+    for attempt in range(retries):
+        try:
+            response = _client.models.generate_content(
+                model=_model,
+                contents=full_prompt,
+                config=config,
+            )
 
-        text = response.text
-        print(f"[Gemini] Response received ({len(text)} chars)")
-        print(f"[Gemini] Raw response:\n{text}")
-        return parse_json_response(text)
+            text = response.text
+            
+            # Validate JSON is complete (ends with })
+            if text.strip().endswith('}'):
+                print("[Gemini] Response received (" + str(len(text)) + " chars)")
+                print("[Gemini] Raw response:\n" + text)
+                return parse_json_response(text)
+            
+            # If truncated, retry
+            if attempt < retries - 1:
+                print("[Gemini] Response truncated, retrying... (attempt " + str(attempt + 2) + "/" + str(retries) + ")")
+                continue
+            else:
+                print("[Gemini] Response still truncated, attempting to parse partial JSON")
+                return parse_json_response(text)
 
-    except json.JSONDecodeError as e:
-        print(f"[Gemini] Failed to parse JSON response: {e}")
-        raise
-    except Exception as e:
-        print(f"[Gemini] API call failed: {type(e).__name__}: {e}")
-        raise
+        except json.JSONDecodeError as e:
+            if attempt < retries - 1:
+                print("[Gemini] JSON parse failed, retrying... (attempt " + str(attempt + 2) + "/" + str(retries) + ")")
+                continue
+            print("[Gemini] Failed to parse JSON response: " + str(e))
+            raise
+        except Exception as e:
+            print("[Gemini] API call failed: " + type(e).__name__ + ": " + str(e))
+            raise

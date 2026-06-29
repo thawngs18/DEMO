@@ -106,6 +106,17 @@ function CustomEdge({
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+        <marker
+          id={'arrow-' + id}
+          markerWidth="10"
+          markerHeight="10"
+          refX="8"
+          refY="4"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M0,0 L0,8 L8,4 z" fill={strokeColor} />
+        </marker>
       </defs>
 
       <BaseEdge
@@ -115,6 +126,7 @@ function CustomEdge({
           stroke: strokeColor,
           strokeWidth: isAttack ? 3 : 2,
           filter: glowFilter || undefined,
+          markerEnd: 'url(#arrow-' + id + ')',
         }}
         className={animated ? 'animate-pulse-glow' : ''}
       />
@@ -127,9 +139,20 @@ function CustomEdge({
               transform: 'translate(-50%, -50%) translate(' + labelX + 'px,' + labelY + 'px)',
               pointerEvents: 'all',
             }}
-            className="px-2 py-0.5 rounded text-[9px] font-mono bg-slate-900/90 border border-cyber-cyan/30 text-cyber-cyan"
           >
-            {isAttack && !isBlocked ? 'ATTACK' : isBlocked ? 'BLOCKED' : 'LINK'}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                useStore.getState().setEdges(
+                  useStore.getState().edges.filter(function(e) { return e.id !== id })
+                )
+                useStore.getState().addLog({ text: 'Deleted connection', type: 'info' })
+              }}
+              className="w-5 h-5 rounded-full bg-red-500/90 hover:bg-red-600 text-white text-[10px] font-bold flex items-center justify-center cursor-pointer shadow-lg border border-red-400/50 transition-colors"
+              title="Delete connection"
+            >
+              ×
+            </button>
           </div>
         </EdgeLabelRenderer>
       )}
