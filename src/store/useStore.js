@@ -71,7 +71,7 @@ function formatResultBody(steps, isMitigated, defense, impactSummary, isRerun) {
       }
     }
   })
-  // Only show Defense Hint on first run (not re-run with defense already applied)
+  // Only show Defense Hint when NOT a re-run (isRerun = false)
   if (!isRerun) {
     if (defense) {
       lines.push('')
@@ -342,7 +342,6 @@ const useStore = create((set, get) => ({
     var lastStep = steps[steps.length - 1]
     var isMitigated = lastStep && (lastStep.status === 'blocked' || lastStep.status === 'bypassed')
 
-    // Don't show defense hint for re-run results - defense is already applied
     var body = formatResultBody(steps, isMitigated, '', data.impact_summary || '', true)
 
     set(function(s) {

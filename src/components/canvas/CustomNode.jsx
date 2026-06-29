@@ -1,5 +1,6 @@
 import { memo, useState } from 'react'
 import { Handle, Position } from 'reactflow'
+import { Shield } from 'lucide-react'
 import { NODE_DEFINITIONS } from '../../data/nodeDefinitions'
 import useStore from '../../store/useStore'
 
@@ -14,11 +15,16 @@ function CustomNode({ id, data, selected }) {
   var isSimulating = useStore(function(s) { return s.isSimulating })
   var animationSteps = useStore(function(s) { return s.animationSteps })
   var animationIndex = useStore(function(s) { return s.animationIndex })
+  var hasDefenseApplied = useStore(function(s) { return s.hasDefenseApplied })
+  var blockedNodeIds = useStore(function(s) { return s.blockedNodeIds })
 
   var isAttackTarget = selectedNode ? selectedNode.id === id : false
 
   var def = NODE_DEFINITIONS.find(function(d) { return d.type === data.type })
   var Icon = def ? def.icon : null
+
+  // Check if this node blocked the attack
+  var isDefenseNode = hasDefenseApplied && blockedNodeIds.includes(id)
 
   var animNodeStatus = null
   if (animationIndex >= 0) {
@@ -94,12 +100,18 @@ function CustomNode({ id, data, selected }) {
           {Icon && (
             <Icon size={20} className={iconColor} />
           )}
-          <div>
+          <div className="flex-1">
             <p className={'text-sm font-medium leading-tight ' + labelClass}>
               {data.label || (def ? def.label : data.type) || 'Node'}
             </p>
             <p className={'text-[10px] font-mono ' + idClass}>{id}</p>
           </div>
+          {/* Defense badge */}
+          {isDefenseNode && (
+            <div className="flex items-center justify-center w-5 h-5 bg-cyber-green/20 border border-cyber-green/50 rounded-full">
+              <Shield size={12} className="text-cyber-green" />
+            </div>
+          )}
         </div>
 
         <Handle type="source" id="right-source" position={Position.Right} className={handleStyle} />

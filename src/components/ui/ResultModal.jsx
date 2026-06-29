@@ -126,7 +126,7 @@ export default function ResultModal() {
                     className="w-full px-4 py-2.5 bg-cyber-cyan/10 hover:bg-cyber-cyan/20 border border-cyber-cyan/30 rounded-lg text-sm font-medium text-cyber-cyan transition-colors flex items-center justify-center gap-2"
                   >
                     <Shield size={16} />
-                    Re-run Attack with Defense Applied
+                    Re-run attack with defenses applied
                   </button>
                 </div>
               )}
