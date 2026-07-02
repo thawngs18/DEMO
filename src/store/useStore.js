@@ -106,6 +106,9 @@ const useStore = create((set, get) => ({
   animationDefense: '',
   scenarios: [],
   showScenariosPanel: false,
+  hasDefenseApplied: false,
+  blockedNodeIds: [],
+  currentScenario: null,  // stores the active scenario for re-run with defense
 
   onNodesChange: (changes) =>
     set({ nodes: applyNodeChanges(changes, get().nodes) }),
@@ -230,6 +233,12 @@ const useStore = create((set, get) => ({
 
     var body = formatResultBody(steps, isMitigated, data.recommended_defense || '', data.impact_summary || '', false)
 
+    // Store original attack_path + scenario for re-run with defense
+    var storedScenario = scenario ? {
+      ...scenario,
+      originalAttackPath: data.attack_path || [],
+    } : null
+
     set(function(s) {
       return {
         animationStatus: isMitigated ? 'mitigated' : 'success',
@@ -239,9 +248,10 @@ const useStore = create((set, get) => ({
           type: isMitigated ? 'warning' : 'success',
           title: isMitigated ? 'Attack Mitigated' : 'Attack Successful',
           body: body,
-          defense: data.recommended_defense || '',  // store defense for re-run
+          defense: data.recommended_defense || '',
         },
         modalIsOpen: true,
+        currentScenario: storedScenario,
       }
     })
 
@@ -253,6 +263,8 @@ const useStore = create((set, get) => ({
       animationStatus: 'idle',
       animationDefense: '',
       selectedNode: null,
+      hasDefenseApplied: false,
+      blockedNodeIds: [],
     })
     set(function(s) {
       return {
@@ -264,18 +276,73 @@ const useStore = create((set, get) => ({
   },
 
   // Re-run simulation with defense measures applied
+  applyDefenseToDiagram: function(payload) {
+    var state = get()
+    var nodeId = payload ? payload.nodeId : null
+    var defense = payload ? payload.defense : null
+    if (!nodeId || !defense) return
+
+    var target = state.nodes.find(function(n) { return n.id === nodeId })
+    if (!target) return
+
+    var nodeType = (target.data && target.data.type) || target.type || ''
+    var label = (target.data && target.data.label) || ''
+    var blocked = ['input', 'attacker', 'internet', 'external']
+    var typeStr = String(nodeType).toLowerCase()
+    var labelStr = String(label).toLowerCase()
+    if (blocked.indexOf(typeStr) !== -1 || blocked.indexOf(labelStr) !== -1) {
+      console.warn('[Store] Blocked defense placement on', typeStr, labelStr)
+      return
+    }
+
+    var newRule = {
+      id: 'defense-' + Date.now(),
+      shortLabel: defense.blockingDetail || defense.action || 'Defense',
+      command: defense.action || '',
+      explanation: defense.explanation || '',
+      blockingDetail: defense.blockingDetail || '',
+    }
+
+    set(function(s) {
+      return {
+        nodes: s.nodes.map(function(n) {
+          if (n.id !== nodeId) return n
+          var existing = (n.data && n.data.configuredDefenses) ? n.data.configuredDefenses : []
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              configuredDefenses: existing.concat([newRule]),
+            },
+          }
+        }),
+        selectedNode: { id: nodeId },
+        mode: 'view',
+      }
+    })
+  },
+
   reRunWithDefense: async (defenseMeasures) => {
     var state = get()
-    var scenarioId = state.attackPaths.length > 0 ? state.attackPaths[0].id : null
+    var currentScenario = state.currentScenario || null
+    
+    // Get target_node_id from stored scenario, fallback to scenario list
+    var targetNodeId = ''
+    if (currentScenario && currentScenario.target_node_id) {
+      targetNodeId = currentScenario.target_node_id
+    } else if (state.scenarios && state.scenarios.length > 0) {
+      targetNodeId = state.scenarios[0].target_node_id || ''
+    }
     
     // Get current topology
     var topology = {
-      nodes: state.nodes.map(function(n) { return { id: n.id, type: n.type, label: n.data?.label || n.id } }),
+      nodes: state.nodes.map(function(n) { return { id: n.id, type: n.type, label: n.data?.label || n.id, configuredDefenses: n.data?.configuredDefenses || [] } }),
       edges: state.edges.map(function(e) { return { id: e.id, source: e.source, target: e.target } }),
     }
 
     set({
       modalIsOpen: false,  // close current modal
+      showScenariosPanel: false, // close scenarios panel for clear animation view
       animationSteps: [],
       animationIndex: 0,
       animationStatus: 'running',
@@ -292,11 +359,14 @@ const useStore = create((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topology: topology,
-          scenario_id: scenarioId || 'defense-run',
-          scenario_name: 'Defense Simulation',
-          scenario_description: 'Re-running attack with defenses in place',
-          target_node_id: scenarioId ? (state.scenarios.find(function(s) { return s.id === scenarioId }) || {}).target_node_id : '',
+          scenario_id: currentScenario ? currentScenario.id : 'defense-run',
+          scenario_name: currentScenario ? currentScenario.name : 'Defense Simulation',
+          scenario_description: currentScenario ? currentScenario.description : 'Re-running attack with defenses in place',
+          target_node_id: targetNodeId,
           defense_measures: defenseMeasures,
+          attack_path: currentScenario && currentScenario.originalAttackPath
+            ? currentScenario.originalAttackPath
+            : [],
         }),
       })
     } catch (e) {
@@ -360,11 +430,44 @@ const useStore = create((set, get) => ({
 
     await new Promise(function(r) { setTimeout(r, 3000) })
 
-    set({
-      animationSteps: [],
+    // Extract blocked node IDs from steps for hover tooltips
+    var blockedIds = []
+    for (var bi = 0; bi < steps.length; bi++) {
+      if (steps[bi].status === 'blocked') {
+        blockedIds.push(steps[bi].nodeId)
+      }
+    }
+
+    var finalState = {
       animationIndex: -1,
       animationStatus: 'idle',
       selectedNode: null,
+    }
+
+    // Only clear animationSteps if attack was NOT blocked
+    // Keep steps for hover tooltips when defense was applied
+    if (blockedIds.length === 0) {
+      finalState.animationSteps = []
+    }
+
+    // Set blockedNodeIds so CustomNode can show defense tooltips
+    if (blockedIds.length > 0) {
+      finalState.hasDefenseApplied = true
+      finalState.blockedNodeIds = blockedIds
+    }
+
+    set(finalState)
+
+    // Update nodes with high z-index for blocked nodes so tooltip shows above all nodes
+    set(function(s) {
+      return {
+        nodes: s.nodes.map(function(n) {
+          if (blockedIds.includes(n.id)) {
+            return { ...n, style: { ...n.style, zIndex: 9999 } }
+          }
+          return n
+        }),
+      }
     })
     set(function(s) {
       return {

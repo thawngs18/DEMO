@@ -10,8 +10,14 @@ html:not(.dark) .react-flow__background {
   background-color: #f8fafc !important;
 }
 
+/* Base node z-index - allows inline style to override */
 .react-flow__node {
-  z-index: 100 !important;
+  z-index: auto !important;
+}
+
+/* Defense node needs higher z-index to show tooltip above other nodes */
+.react-flow__node {
+  z-index: 100;
 }
 
 .react-flow__edge {

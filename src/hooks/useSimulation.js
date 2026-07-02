@@ -7,10 +7,16 @@ export function useSimulation() {
     store.setScanning(true)
     store.addLog({ text: 'Scanning attack surface...', type: 'info' })
 
+    var defenseNodes = (store.nodes || []).filter(function(n) { return n.data && n.data.isDefense })
+
     fetch('http://localhost:8000/api/simulation/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nodes: store.nodes, edges: store.edges }),
+      body: JSON.stringify({
+        nodes: store.nodes,
+        edges: store.edges,
+        defenses: defenseNodes.map(function(n) { return { nodeId: n.id, detail: n.data.defenseDetail } })
+      }),
     })
       .then(function(res) {
         if (!res.ok) throw new Error('Scan failed')

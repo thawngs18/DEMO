@@ -25,6 +25,8 @@ class Position(BaseModel):
 class NodeData(BaseModel):
     label: str
     type: str = "customNode"
+    configuredDefenses: list[dict] | None = None
+    configuredDefenses: list[dict] | None = None
 
 
 class Node(BaseModel):
@@ -55,6 +57,12 @@ class GenerateResponse(BaseModel):
 class TopologyRequest(BaseModel):
     nodes: list[Node]
     edges: list[Edge]
+
+
+class ScanRequest(BaseModel):
+    nodes: list[Node]
+    edges: list[Edge]
+    defenses: list[dict] | None = None
 
 
 class SimulationStep(BaseModel):
@@ -88,22 +96,57 @@ class SimulationWithDefenseRequest(BaseModel):
     scenario_description: str = ""
     target_node_id: str = ""
     defense_measures: str  # defense recommendations to apply
+    attack_path: list[SimulationStep] = []  # ORIGINAL attack path from first run — must re-use this
 
 # ---------------------------------------------------------------------------
 # AI Helper & Topology Formatting
 # ---------------------------------------------------------------------------
 
 
-def format_topology(req: TopologyRequest) -> str:
+def format_topology(req: TopologyRequest | ScanRequest) -> str:
     node_lines = [f"  - {n.id} (type: {n.data.type if n.data else n.type})" for n in req.nodes]
     edge_lines = [f"  - {e.source} -> {e.target}" for e in req.edges]
-    return (
+    text = (
         f"Network Topology ({len(req.nodes)} nodes, {len(req.edges)} edges):\n"
         f"\n"
         f"Nodes:\n" + "\n".join(node_lines) + "\n"
         f"\n"
         f"Data Flow:\n" + "\n".join(edge_lines)
     )
+
+    defenses = getattr(req, "defenses", None)
+    if defenses:
+        defense_lines = [
+            f"  - {d.get('nodeId', 'unknown')}: {d.get('detail', 'active defense')}"
+            for d in defenses
+        ]
+        text += (
+            "\n\nActive Defenses (already applied):\n"
+            + "\n".join(defense_lines)
+            + "\n"
+        )
+
+    configured_defenses_lines = []
+    for node in req.nodes:
+        node_data = getattr(node, "data", None)
+        if not node_data:
+            continue
+        configured = getattr(node_data, "configuredDefenses", None) or []
+        if configured:
+            configured_defenses_lines.append(f"Node {node.id} Configured Defenses:")
+            for rule in configured:
+                configured_defenses_lines.append(
+                    f"  - {rule.get('shortLabel', 'Defense')}: {rule.get('command', '')}"
+                )
+
+    if configured_defenses_lines:
+        text += (
+            "\n\nNode Configured Defenses:\n"
+            + "\n".join(configured_defenses_lines)
+            + "\n"
+        )
+
+    return text
 
 
 def format_simulation_request(req: TopologyRequest, scenario: dict) -> str:
@@ -116,6 +159,82 @@ def format_simulation_request(req: TopologyRequest, scenario: dict) -> str:
         f"  Target Node: {scenario['target_node_id']}\n"
         f"  Description: {scenario['description']}"
     )
+
+
+_BLOCKED_DEFENSE_TYPES = {"input", "attacker", "internet"}
+
+# Priority order: firewall/ips/ids first (best for blocking), then cloud/server/db, then others
+_DEFENSE_PRIORITY = [
+    "firewall", "fw",
+    "ips",
+    "ids",
+    "cloud",
+    "server", "web_server", "app_server",
+    "database", "db",
+    "router", "gateway", "switch",
+    "workstation",
+]
+
+
+def _get_node_type(node: Node) -> str:
+    return (node.data.type if node.data else node.type or "").lower()
+
+
+def _is_defensible_node(node: Node) -> bool:
+    return _get_node_type(node) not in _BLOCKED_DEFENSE_TYPES
+
+
+def _node_is_defense(node: Node) -> bool:
+    node_type = _get_node_type(node)
+    if node_type == "defense":
+        return True
+    top_type = (node.type or "").lower()
+    return top_type == "defense" or str(node.id or "").startswith("defense-")
+
+
+def _node_priority(node: Node) -> int:
+    """Lower = more suitable for defense placement."""
+    node_type = _get_node_type(node)
+    for i, keyword in enumerate(_DEFENSE_PRIORITY):
+        if keyword in node_type:
+            return i
+    return 999
+
+
+def find_suitable_defense_node(nodes: list[Node], scenario: dict) -> Node | None:
+    target_id = (scenario.get("target_node_id") or "").strip()
+    target_node = next((n for n in nodes if n.id == target_id and _is_defensible_node(n)), None)
+    if target_node:
+        return target_node
+
+    # Sort all defensible nodes by priority: firewall/ips/ids first
+    defensible = [n for n in nodes if _is_defensible_node(n)]
+    if not defensible:
+        return None
+
+    return sorted(defensible, key=_node_priority)[0]
+
+
+def strip_defense_nodes(nodes: list[Node], edges: list[Edge]) -> tuple[list[Node], list[Edge]]:
+    defense_ids = {n.id for n in nodes if _node_is_defense(n)}
+    clean_nodes = [n for n in nodes if not _node_is_defense(n)]
+    clean_edges = [e for e in edges if e.source not in defense_ids and e.target not in defense_ids]
+    return clean_nodes, clean_edges
+
+
+def constrain_attack_path(attack_path: list[dict], nodes: list[Node]) -> list[dict]:
+    valid_ids = {n.id for n in nodes}
+    cleaned = []
+    for step in attack_path:
+        node_id = step.get("node_id", "")
+        status = step.get("status", "")
+        if node_id not in valid_ids:
+            continue
+        if status not in {"compromised", "bypassed", "blocked"}:
+            step["status"] = "compromised"
+        cleaned.append(step)
+    return cleaned
+
 
 # ---------------------------------------------------------------------------
 # FastAPI App
@@ -255,7 +374,8 @@ async def validate_topology(body: TopologyRequest) -> dict:
 
 
 @app.post("/api/simulation/scan")
-async def scan_topology(body: TopologyRequest) -> dict:
+async def scan_topology(body: ScanRequest) -> dict:
+    # Keep ALL nodes including defense nodes — scan must consider them as active controls
     formatted = format_topology(body)
     result = await call_llm(
         system_prompt=SCAN_PROMPT,
@@ -277,21 +397,41 @@ async def run_simulation(body: SimulationRequest) -> SimulationResponse:
         system_prompt=SIMULATION_PROMPT,
         user_prompt=formatted,
     )
-    return result
+    if result.get("attack_path"):
+        result["attack_path"] = constrain_attack_path(result["attack_path"], body.topology.nodes)
+    return SimulationResponse(**result)
 
 
 @app.post("/api/simulation/run-with-defense")
 async def run_simulation_with_defense(body: SimulationWithDefenseRequest) -> SimulationResponse:
+    if not body.attack_path:
+        raise HTTPException(status_code=400, detail="attack_path is required for re-run")
+
     scenario = {
         "name": body.scenario_name,
         "target_node_id": body.target_node_id,
         "description": body.scenario_description,
     }
 
+    # Keep ALL nodes including defense nodes so LLM sees them as active controls
     formatted = format_simulation_request(body.topology, scenario)
+    formatted += (
+        "\n\n"
+        "IMPORTANT — RE-RUN INSTRUCTIONS:\n"
+        "You are re-running an attack that was ALREADY traced. "
+        "Use the provided ORIGINAL attack path below and re-evaluate EACH step "
+        "with the new defense measures in place.\n"
+        "Do NOT generate a new attack path. Only update the 'status' of each step.\n\n"
+        "Original Attack Path:\n"
+    )
+    for i, step in enumerate(body.attack_path):
+        formatted += f"  Step {i + 1}: Node {step.node_id} — {step.action} (originally: {step.status})\n"
+
     system_prompt = SIMULATION_WITH_DEFENSE_PROMPT.replace("{defense_measures}", body.defense_measures)
     result = await call_llm(
         system_prompt=system_prompt,
         user_prompt=formatted,
     )
-    return result
+    if result.get("attack_path"):
+        result["attack_path"] = constrain_attack_path(result["attack_path"], body.topology.nodes)
+    return SimulationResponse(**result)
